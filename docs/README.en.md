@@ -8,6 +8,8 @@ Community firmware for the FoloToy AI Passport, based on ESP32-C3 with 8 MB Flas
 
 **Ask Xiaozhi to adjust the volume, play music or radio, and set reminders on the device.**
 
+> **Branch note.** `feature/passport-os` in [BlackFlame-plus/ai-passport](https://github.com/BlackFlame-plus/ai-passport) is derived from [manchunx7-bit/passport-os](https://github.com/manchunx7-bit/passport-os) (MIT). The Passport OS `LICENSE`, copyright, and attribution are unchanged. This is a long-lived variant line and is not the official FoloToy AI Passport `main` baseline.
+
 ## Why this project exists
 
 Thank you to everyone who has enjoyed the project and shared feedback. I started Passport OS to make a small device I would use regularly, then selected thirteen functions and apps through repeated experiments.

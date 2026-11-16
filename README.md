@@ -16,6 +16,8 @@ FoloToy AI Passport 社区固件 · ESP32-C3 · 8 MB Flash · 13 款功能与应
 
 ---
 
+> **Branch note.** `feature/passport-os` in [BlackFlame-plus/ai-passport](https://github.com/BlackFlame-plus/ai-passport) is derived from [manchunx7-bit/passport-os](https://github.com/manchunx7-bit/passport-os) (MIT). The Passport OS `LICENSE`, copyright, and attribution are unchanged. This is a long-lived variant line and is not the official FoloToy AI Passport `main` baseline.
+
 ## 从自己想用开始
 
 首先，感谢大家对这个项目的喜欢和支持。收到这么多反馈，让这件原本只为自己做的小事，多了很多继续折腾的理由。
