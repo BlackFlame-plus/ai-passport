@@ -88,7 +88,7 @@ int main(void) {
 with tempfile.TemporaryDirectory() as tmp:
     file = Path(tmp) / 'decrypt.c'
     file.write_text(prelude + decrypt + cases)
-    cjson = Path('/opt/esp-idf/components/json/cJSON')
+    cjson = ROOT / 'tests/vendor/cjson'
     binary = file.with_suffix('')
     subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Werror',
                     '-fsanitize=address,undefined', '-I' + str(cjson), str(file),

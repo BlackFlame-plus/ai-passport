@@ -1,5 +1,4 @@
 """Execute production registration parsing and readiness gates with a fake clock."""
-import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -75,7 +74,7 @@ int main(){
 with tempfile.TemporaryDirectory() as tmp:
     path = Path(tmp) / 'readiness.cpp'
     path.write_text(prelude + register + '}\nstatic bool tick(){bool error=false;do{\n' + gate + '\n}while(false);return error;}\n' + checks)
-    cjson = Path(os.environ.get('IDF_PATH', '/opt/esp-idf')) / 'components/json/cJSON'
+    cjson = ROOT / 'tests/vendor/cjson'
     subprocess.run(['c++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-fsanitize=address,undefined',
                     '-I', str(cjson), str(path), str(cjson / 'cJSON.c'), '-o', str(path.with_suffix(''))], check=True)
     subprocess.run([str(path.with_suffix(''))], check=True)
