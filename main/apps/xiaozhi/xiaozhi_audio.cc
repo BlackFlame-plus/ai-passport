@@ -26,7 +26,7 @@ void publish_level(const uint8_t *pcm, size_t bytes, unsigned gain = 100) {
     const uint8_t level = face::pcm_level(reinterpret_cast<const int16_t *>(pcm), bytes / 2, gain);
     s_visual_level.store((visual_time() << 8) | level, std::memory_order_relaxed);
 }
-constexpr int kEncodeRate = 16000;      // 编码固定 16kHz（与官方固件一致）
+constexpr int kEncodeRate = 24000;      // Grok Opus is 24 kHz mono, same clock as playback
 constexpr int kChannels = 1;
 constexpr int kBitsPerSample = 16;
 

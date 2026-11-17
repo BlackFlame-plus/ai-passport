@@ -42,8 +42,8 @@ void refresh(){
     }
     if(!count){
         ui_pixel_label_set_text(heading,v.list_id?v.current.title:"还没有清单");
-        ui_pixel_label_set_text(body,"对小智说：\n\n帮我整理一份出门清单\n\n也可以添加购物事项");
-        ui_pixel_label_set_text(footer,message?message:"确定打开小智\n长按确定返回");return;
+        ui_pixel_label_set_text(body,"对 Grok 说：\n\n帮我整理一份出门清单\n\n也可以添加购物事项");
+        ui_pixel_label_set_text(footer,message?message:"确定打开 Grok\n长按确定返回");return;
     }
     char text[180];std::snprintf(text,sizeof(text),"%s %u/%u",v.list_id?v.current.title:"文字清单",unsigned(v.selected+1),unsigned(count));
     ui_pixel_label_set_text(heading,text);ui_pixel_label_set_text(body,"");
@@ -93,5 +93,5 @@ void key(uint8_t btn,app_btn_event_t event,uint16_t){
 }
 }}
 extern const passport_app_t g_lists_app;
-const passport_app_t g_lists_app={.id=APP_ID_LISTS,.name="文字清单",.en_name="LISTS",.desc="用小智整理事项\n随时查看完成",.tag="本地文字",.theme_color=0x8CF5A6,
+const passport_app_t g_lists_app={.id=APP_ID_LISTS,.name="文字清单",.en_name="LISTS",.desc="用 Grok 整理事项\n随时查看完成",.tag="本地文字",.theme_color=0x8CF5A6,
     .init=nullptr,.start=lists::start,.stop=lists::stop,.on_key=lists::key,.prepare_stop=nullptr,.on_back=lists::back};

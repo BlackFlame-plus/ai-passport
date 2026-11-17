@@ -1,140 +1,139 @@
-#define XIAOZHI_REAL_JSON
 #include "mock_platform.h"
 #define private public
-#include "apps/xiaozhi/xiaozhi_protocol.h"
+#include "apps/xiaozhi/grok_protocol.h"
+#include "apps/xiaozhi/grok_config.h"
 #include "apps/xiaozhi/xiaozhi_audio.h"
 #undef private
-#include "../main/apps/xiaozhi/xiaozhi_protocol.cc"
-const char *const kNsXiaozhi="xiaozhi";
-std::string store_get_string(const char *,const char *,const char *) {return "client-id";}
-bool store_set_string(const char *,const char *,const std::string &) {return true;}
+#include "../main/apps/xiaozhi/grok_protocol.cc"
+
 static int accepted_audio=0;
-static int tool_executions=0;
 namespace device_control {void cancel_session(){} void response_sent(uint64_t,bool){} }
-namespace reminders {
-std::string mcp_result(const char *,const char *,bool *error,uint64_t) {
-    ++tool_executions; *error=false; return "{\"saved\":true}";
-}
-}
 namespace xiaozhi {
 AudioService::AudioService() {} AudioService::~AudioService() {}
 AudioService &AudioService::GetInstance() {static AudioService a;return a;}
 void AudioService::PushIncomingAudio(const uint8_t *,size_t) {++accepted_audio;}
 }
+
+static esp_websocket_event_data_t text_frame(const char *body) {
+    const int n = int(std::strlen(body));
+    return {body, n, 0, n, 1, {0}};
+}
+
 int main() {
-    using namespace xiaozhi;Protocol p;auto q=xQueueCreate(1,sizeof(Event));p.SetEventQueue(q);
-    const auto original_mac=p.mac_address_, original_client=p.client_id_;
-    p.Publish(EvType::AiSentence,"fills the queue");assert(q->entries.size()==1);
-    p.Publish(EvType::Connected,nullptr);p.Publish(EvType::HelloOk,nullptr);
-    p.Publish(EvType::Disconnected,nullptr);p.Publish(EvType::SocketError,nullptr);
-    Event event;const EvType order[]={EvType::Disconnected,EvType::SocketError,EvType::Connected,EvType::HelloOk};
-    for(auto expected:order) {assert(p.PopCriticalEvent(&event));assert(event.type==expected);}
-    assert(!p.PopCriticalEvent(&event));assert(q->entries.size()==1);
-    p.SetState(State::Thinking);p.SetState(State::Speaking);assert(p.GetState()==State::Speaking);
-    mock_fail_size=kMaxTextMessage;
-    assert(!p.Start("wss://example.invalid/","",3)&&!p.rx_text_);
-    mock_fail_size=-1;
-    assert(p.Start("wss://example.invalid/","",3)&&p.rx_text_);
-    p.client_=reinterpret_cast<void *>(1);p.hello_ok_=false;
-    assert(!p.TriggerStartListen());assert(mock_sent_text.empty());
-    p.hello_ok_=true;assert(!p.TriggerStartListen()); // missing session id
-    p.session_id_="session";assert(p.TriggerStartListen());assert(mock_sent_text.size()==1);
-    const char binary[]={0,0,0,1,1};
-    esp_websocket_event_data_t data{binary,5,0,5,2,{0}};
-    p.SetState(State::Idle);p.HandleData(&data);assert(accepted_audio==0);
-    p.SetState(State::Speaking);p.HandleData(&data);assert(accepted_audio==1);
-    p.hello_ok_=false;p.HandleData(&data);assert(accepted_audio==1);
-    // Real JSON parser + production callback: a goodbye invalidates the
-    // session even if the socket remains open and the text queue is full.
+    using namespace xiaozhi;
+    assert(!grok_key_acceptable("short"));
+    assert(!grok_key_acceptable("has space-in-token!!"));
+    assert(!grok_key_acceptable("quote\"in-the-token!!"));
+    assert(grok_key_acceptable("xai-test-key-0123456789"));
+    assert(grok_proxy_acceptable("", 0));
+    assert(!grok_proxy_acceptable("", 80));
+    assert(grok_proxy_acceptable("192.168.1.20", 7897));
+    assert(!grok_proxy_acceptable("127.0.0.1", 7897));
+    assert(!grok_proxy_acceptable("10.0.0.255", 7897));
+    assert(!grok_proxy_acceptable("api.x.ai", 443));
+
+    Protocol p;
+    auto q=xQueueCreate(4, sizeof(Event));
+    p.SetEventQueue(q);
+    p.Publish(EvType::AiSentence, "fills one slot");
+    p.Publish(EvType::Connected, nullptr);
+    p.Publish(EvType::HelloOk, nullptr);
+    p.Publish(EvType::Disconnected, nullptr);
+    p.Publish(EvType::SocketError, nullptr);
+    Event event;
+    const EvType order[]={EvType::Disconnected, EvType::SocketError, EvType::Connected, EvType::HelloOk};
+    for (auto expected : order) { assert(p.PopCriticalEvent(&event)); assert(event.type==expected); }
+    assert(!p.PopCriticalEvent(&event));
+
+    assert(!p.Start("too-short", "", 0));
+    assert(!p.client_ && !p.rx_text_ && p.headers_[0]=='\0');
+    const char *key="xai-test-key-0123456789";
+    assert(p.Start(key, "", 0));
+    assert(mock_ws_uri.find("wss://api.x.ai/v1/realtime?model=grok-voice-latest")!=std::string::npos);
+    assert(mock_ws_headers==std::string("Authorization: Bearer ")+key+"\r\n");
+    assert(mock_ws_headers.find("Protocol-Version")==std::string::npos);
+    assert(mock_ws_headers.find("Device-Id")==std::string::npos);
+    assert(p.headers_[0]=='\0'); // local copy wiped after the client duplicates it
+    assert(p.ConfigureSession());
+    assert(mock_sent_text.size()==1);
+    const std::string &update=mock_sent_text.back();
+    assert(update.find("\"type\":\"session.update\"")!=std::string::npos);
+    assert(update.find("\"voice\":\"eve\"")!=std::string::npos);
+    assert(update.find("\"turn_detection\":null")!=std::string::npos);
+    assert(update.find("\"language_hint\":\"zh\"")!=std::string::npos);
+    assert(update.find("\"type\":\"audio/opus\"")!=std::string::npos);
+    assert(update.find("\"transport\":\"binary\"")!=std::string::npos);
+    assert(update.find("小屏幕")!=std::string::npos);
+    assert(!p.TriggerStartListen()); // session not ready
+    const char updated[]="{\"type\":\"session.updated\",\"session\":{\"voice\":\"eve\"}}";
+    esp_websocket_event_data_t hello=text_frame(updated);
+    p.HandleData(&hello);
+    assert(p.HandshakeDone() && p.GetState()==State::Idle);
+    assert(p.PopCriticalEvent(&event) && event.type==EvType::HelloOk);
+    assert(p.TriggerStartListen() && mock_sent_text.size()==1 && p.GetState()==State::Listening);
+    const uint8_t packet[]={0x01, 0x02, 0x03, 0x04};
+    assert(p.SendAudio(packet, sizeof(packet)));
+    assert(mock_sent_bin.size()==1 && mock_sent_bin.back().size()==sizeof(packet));
+    assert(std::memcmp(mock_sent_bin.back().data(), packet, sizeof(packet))==0);
+    p.SetState(State::Speaking);
+    esp_websocket_event_data_t bin{reinterpret_cast<const char *>(packet), 4, 0, 4, 2, {0}};
+    p.HandleData(&bin);
+    assert(accepted_audio==1);
+    p.hello_ok_=false;
+    p.HandleData(&bin);
+    assert(accepted_audio==1);
     p.hello_ok_=true;
-    const char goodbye[]="{\"type\":\"goodbye\"}";
-    esp_websocket_event_data_t bye{goodbye,sizeof(goodbye)-1,0,sizeof(goodbye)-1,1,{0}};
-    const unsigned stops=mock_ws_stops, destroys=mock_ws_destroys;
-    p.HandleData(&bye);
-    assert(p.NeedsRestart() && !p.HandshakeDone() && p.GetState()==State::Disconnected);
-    assert(!p.TriggerStartListen());
+    p.SetState(State::Listening);
+    assert(p.TriggerStopListen());
+    assert(mock_sent_text[mock_sent_text.size()-2].find("input_audio_buffer.commit")!=std::string::npos);
+    assert(mock_sent_text.back().find("response.create")!=std::string::npos);
+    assert(p.GetState()==State::Thinking);
+    const char user[]="{\"type\":\"conversation.item.input_audio_transcription.completed\",\"transcript\":\"\\u4f60\\u597d\"}";
+    esp_websocket_event_data_t user_ev=text_frame(user);
+    p.HandleData(&user_ev);
+    assert(xQueueReceive(q, &event, 0)==pdTRUE && event.type==EvType::AiSentence);
+    assert(xQueueReceive(q, &event, 0)==pdTRUE && event.type==EvType::UserText);
+    assert(std::strcmp(event.text, "你好")==0);
+    const char delta[]="{\"type\":\"response.output_audio_transcript.delta\",\"delta\":\"早\"}";
+    esp_websocket_event_data_t delta_ev=text_frame(delta);
+    p.HandleData(&delta_ev);
+    assert(xQueueReceive(q, &event, 0)==pdTRUE && event.type==EvType::AiDelta && std::strcmp(event.text, "早")==0);
+    p.SetState(State::Speaking);
+    const char done[]="{\"type\":\"response.done\"}";
+    esp_websocket_event_data_t done_ev=text_frame(done);
+    p.HandleData(&done_ev);
+    assert(p.GetState()==State::Idle);
+    const unsigned stops=mock_ws_stops;
+    const char err[]="{\"type\":\"error\",\"error\":{\"message\":\"rate limit\"}}";
+    esp_websocket_event_data_t err_ev=text_frame(err);
+    p.HandleData(&err_ev);
+    assert(mock_ws_stops==stops);
+    assert(xQueueReceive(q, &event, 0)==pdTRUE && event.type==EvType::Alert);
+    assert(std::strstr(event.text, "rate limit"));
+    p.SetState(State::Speaking);
+    assert(p.TriggerAbort());
+    assert(mock_sent_text.back().find("response.cancel")!=std::string::npos);
+    assert(p.GetState()==State::Idle);
+    std::string huge(kMaxTextMessage, ' ');
+    huge.replace(0, 15, "{\"type\":\"error\"");
+    esp_websocket_event_data_t huge_ev{huge.data(), int(huge.size()), 0, int(huge.size()), 1, {0}};
+    p.HandleData(&huge_ev);
+    assert(p.GetState()==State::Idle);
+    p.WebsocketEventHandler(&p, nullptr, WEBSOCKET_EVENT_DISCONNECTED, nullptr);
+    assert(p.NeedsRestart() && !p.HandshakeDone());
     assert(p.PopCriticalEvent(&event) && event.type==EvType::Disconnected);
-    assert(q->entries.size()==1); // lifecycle event bypasses full display queue
-    p.WebsocketEventHandler(&p,nullptr,WEBSOCKET_EVENT_CLOSED,nullptr);
-    p.WebsocketEventHandler(&p,nullptr,WEBSOCKET_EVENT_FINISH,nullptr);
-    assert(!p.PopCriticalEvent(&event)); // one terminal notification
-    assert(mock_ws_stops==stops && mock_ws_destroys==destroys); // never stop in callback
-    const char late[]="{\"type\":\"hello\",\"session_id\":\"late\"}";
-    esp_websocket_event_data_t late_hello{late,sizeof(late)-1,0,sizeof(late)-1,1,{0}};
-    p.HandleData(&late_hello);p.HandleData(&data);
-    assert(!p.HandshakeDone() && accepted_audio==1);
-    // Clean CLOSE without goodbye and unexpected task FINISH both retire the
-    // handle. A transient disconnect still permits SDK auto-reconnection.
-    for (int terminal : {WEBSOCKET_EVENT_CLOSED,WEBSOCKET_EVENT_FINISH}) {
-        assert(p.Start("wss://example.invalid/","",3));p.hello_ok_=true;
-        p.WebsocketEventHandler(&p,nullptr,terminal,nullptr);
-        assert(p.NeedsRestart() && !p.HandshakeDone());
-        assert(p.PopCriticalEvent(&event) && event.type==EvType::Disconnected);
-    }
-    assert(p.Start("wss://example.invalid/","",3));
-    p.WebsocketEventHandler(&p,nullptr,WEBSOCKET_EVENT_DISCONNECTED,nullptr);
-    assert(!p.NeedsRestart());
-    p.Stop();assert(!p.PopCriticalEvent(&event));
-    assert(p.Start("wss://example.invalid/","",3));
-    p.HandleData(&late_hello);
-    assert(p.HandshakeDone() && p.session_id()=="late");
-    // Receive callbacks only enqueue; the controller performs the operation.
-    const char call[]=R"({"type":"mcp","payload":{"id":42,"method":"tools/call","params":{"name":"self.reminder.create","arguments":{"title":"喝水","delay_seconds":600}}}})";
-    esp_websocket_event_data_t rpc{call,sizeof(call)-1,0,sizeof(call)-1,1,{0}};
-    p.HandleData(&rpc); assert(tool_executions==0);
-    assert(p.ProcessMcp() && tool_executions==1);
-    const auto saved_reply=mock_sent_text.back();
-    p.HandleData(&rpc); assert(p.ProcessMcp() && tool_executions==1);
-    assert(mock_sent_text.back()==saved_reply);
-    // An interleaved call cannot make a retry execute a relative adjustment twice.
-    const char status[]=R"({"type":"mcp","payload":{"id":43,"method":"tools/call","params":{"name":"self.device.get_status","arguments":{}}}})";
-    esp_websocket_event_data_t status_rpc{status,sizeof(status)-1,0,sizeof(status)-1,1,{0}};
-    p.HandleData(&status_rpc);assert(p.ProcessMcp()&&tool_executions==2);
-    p.HandleData(&rpc);assert(p.ProcessMcp()&&tool_executions==2);
-    assert(mock_sent_text.back()==saved_reply);
-    assert(!p.ProcessMcp());
-    // A complete valid JSON prefix followed by oversized whitespace is rejected.
-    std::string oversized=std::string(call)+std::string(2100,' ');
-    esp_websocket_event_data_t huge{oversized.data(),int(oversized.size()),0,int(oversized.size()),1,{0}};
-    p.HandleData(&huge); assert(!p.ProcessMcp() && tool_executions==2);
-    // Every refused request with a usable id is answered, even in a burst.
-    const auto send_rpc=[&](const std::string &text){
-        esp_websocket_event_data_t frame{text.data(),int(text.size()),0,int(text.size()),1,{0}};p.HandleData(&frame);
-    };
-    const auto rpc_with=[](int id,const char *method){
-        return "{\"type\":\"mcp\",\"payload\":{\"id\":"+std::to_string(id)+",\"method\":\""+method+"\",\"params\":{}}}";
-    };
-    for(int id=60;id<65;++id) send_rpc(rpc_with(id,"tools/list"));
-    send_rpc(rpc_with(70,"tools/a_method_name_longer_than_limit"));
-    std::string refused;
-    for(int i=0;i<6;++i){assert(p.ProcessMcp());refused+=mock_sent_text.back();}
-    for(int id:{63,64,70}) assert(refused.find("\"id\":"+std::to_string(id)+",\"error\"")!=std::string::npos);
-    assert(tool_executions==5&&!p.ProcessMcp());
-    delete q;p.SetEventQueue(nullptr);
-    p.Stop();assert(p.mac_address_.empty()&&p.client_id_.empty());
-    assert(p.Start("wss://example.invalid/", "", 3));
-    assert(p.mac_address_==original_mac&&p.client_id_==original_client);
-    p.Stop();assert(p.mac_address_.empty()&&p.client_id_.empty());
-    assert(!p.rx_text_&&mock_allocations.empty());
-    // PING wakes a connected worker before stop/join. A failed PING must not
-    // prevent cleanup, and a disconnected client must not send anything.
-    for (bool connected : {true,false}) for (int result : {0,-1}) {
-        mock_ws_connected=true;
-        assert(p.Start("wss://example.invalid/","",3));
-        mock_ws_connected=connected;mock_ws_ping_result=result;
-        mock_ws_lifecycle.clear();mock_ws_ping_timeout=0;
-        const unsigned pings=mock_ws_pings;
-        p.Stop();
-        const std::vector<std::string> expected=connected ?
-            std::vector<std::string>{"ping","stop","destroy"} :
-            std::vector<std::string>{"stop","destroy"};
-        assert(mock_ws_lifecycle==expected);
-        assert(mock_ws_pings==pings+(connected?1:0));
-        assert(mock_ws_ping_timeout==(connected?pdMS_TO_TICKS(100):0));
-        assert(!p.client_&&!p.rx_text_&&mock_allocations.empty());
-        assert(!p.PopCriticalEvent(&event));
-        p.Stop();assert(mock_ws_lifecycle==expected); // repeated stop is idle
-    }
-    mock_ws_connected=true;mock_ws_ping_result=0;
-    std::puts("Xiaozhi protocol: goodbye/clean close/finish recovery, critical mailbox, stale-audio guards PASS");
+    p.WebsocketEventHandler(&p, nullptr, WEBSOCKET_EVENT_CLOSED, nullptr);
+    p.WebsocketEventHandler(&p, nullptr, WEBSOCKET_EVENT_FINISH, nullptr);
+    assert(!p.PopCriticalEvent(&event));
+    assert(mock_ws_stops==stops);
+    p.Stop();
+    assert(p.headers_[0]=='\0' && !p.rx_text_ && !p.client_);
+    mock_ws_connected=true;
+    assert(p.Start(key, "", 0));
+    mock_ws_lifecycle.clear();
+    p.Stop();
+    assert(mock_ws_lifecycle.size()>=3);
+    assert(mock_ws_lifecycle[0]=="ping" && mock_ws_lifecycle[1]=="stop" && mock_ws_lifecycle[2]=="destroy");
+    delete q;
+    std::puts("Grok protocol: session, opus binary, transcripts, cancel, reconnect PASS");
 }

@@ -501,7 +501,7 @@ int main(int argc,char **argv) {
         c = Path(cls.tmp.name) / 'chat.c'
         c.write_text(code, encoding='utf-8')
         cls.binary = c.with_suffix('')
-        cjson = Path(os.environ.get('IDF_PATH', '/opt/esp-idf')) / 'components/json/cJSON'
+        cjson = ROOT / 'tests/vendor/cjson'
         compiled = subprocess.run([
             os.environ.get('CC', 'cc'), '-std=gnu11', '-Wall', '-Wextra', '-Werror',
             '-I', str(cjson), '-I', str(ROOT / 'tests/muse_mocks'), '-I', str(ROOT / 'components/passport_muse/sdk'),

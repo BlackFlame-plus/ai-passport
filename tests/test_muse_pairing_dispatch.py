@@ -173,7 +173,7 @@ int main(void) {
             c.write_text(prelude + job_type + workers + provision + send + optional + dispatch + cases,
                          encoding='utf-8')
             binary = c.with_suffix('')
-            cjson = Path(os.environ.get('IDF_PATH', '/opt/esp-idf')) / 'components/json/cJSON'
+            cjson = ROOT / 'tests/vendor/cjson'
             compiled = subprocess.run([
                 os.environ.get('CC', 'cc'), '-std=gnu11', '-Wall', '-Wextra', '-Werror',
                 '-Wno-unused-parameter', '-fsanitize=address,undefined',

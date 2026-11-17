@@ -1,13 +1,19 @@
-"""Exercise production base64url decoding with real mbedTLS and shared storage."""
+"""Exercise production base64url decoding against a mbedtls-compatible Base64 API."""
 from pathlib import Path
+import os
+import shutil
 import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
+CC = os.environ.get('CC') or shutil.which('gcc') or 'cc'
+CXX = os.environ.get('CXX') or shutil.which('g++') or 'c++'
 source = (ROOT / 'components/passport_muse/sdk/link_pairing.c').read_text()
 decode = source[source.index('static bool base64url_decode('):
                 source.index('static bool json_string(')]
-mbedtls = Path('/opt/esp-idf/components/mbedtls/mbedtls')
+idf_mbedtls = Path('/opt/esp-idf/components/mbedtls/mbedtls')
+vendor = ROOT / 'tests/vendor/mbedtls_base64'
+use_idf = (idf_mbedtls / 'library' / 'base64.c').is_file()
 prelude = r'''
 #include <cassert>
 #include <cctype>
@@ -75,23 +81,56 @@ int main() {
 '''
 with tempfile.TemporaryDirectory() as tmp:
     directory = Path(tmp)
-    (directory / 'pairing_test_config.h').write_text('#define MBEDTLS_BASE64_C\n')
-    flags = ['-Wall', '-Wextra', '-Werror', '-fsanitize=address,undefined', '-g',
-             '-DMBEDTLS_CONFIG_FILE="pairing_test_config.h"',
-             '-I' + str(directory), '-I' + str(mbedtls / 'include')]
+    flags = ['-Wall', '-Wextra', '-Werror', '-fsanitize=address,undefined', '-g']
     objects = []
-    for name in ('base64', 'platform_util', 'constant_time'):
-        obj = directory / (name + '.o')
-        subprocess.run(['cc', '-std=c11', *flags, '-c',
-                        str(mbedtls / 'library' / (name + '.c')), '-o', str(obj)], check=True)
+    if use_idf:
+        (directory / 'pairing_test_config.h').write_text('#define MBEDTLS_BASE64_C\n')
+        flags += ['-DMBEDTLS_CONFIG_FILE="pairing_test_config.h"',
+                  '-I' + str(directory), '-I' + str(idf_mbedtls / 'include')]
+        for name in ('base64', 'platform_util', 'constant_time'):
+            obj = directory / (name + '.o')
+            subprocess.run([CC, '-std=c11', *flags, '-c',
+                            str(idf_mbedtls / 'library' / (name + '.c')), '-o', str(obj)], check=True)
+            objects.append(str(obj))
+        backend = 'real mbedTLS'
+    else:
+        flags += ['-I' + str(vendor)]
+        obj = directory / 'mbedtls_base64.o'
+        subprocess.run([CC, '-std=c11', *flags, '-c',
+                        str(vendor / 'mbedtls_base64.c'), '-o', str(obj)], check=True)
         objects.append(str(obj))
+        backend = 'vendor mbedtls-compatible Base64'
     test = directory / 'test.cpp'
     test.write_text(prelude + decode + checks)
     binary = directory / 'test'
-    subprocess.run(['c++', '-std=c++17', *flags,
-                    '-I' + str(ROOT / 'components/bsp/include'),
-                    '-I' + str(ROOT / 'components/passport_muse/sdk'),
-                    str(ROOT / 'components/passport_muse/sdk/muse_pairing_memory.cpp'),
-                    str(test), *objects, '-o', str(binary)], check=True)
+    # Drop ASan when the local toolchain lacks the runtime (CI runners have it).
+    link_flags = list(flags)
+    link = subprocess.run([CXX, '-std=c++17', *link_flags,
+                           '-I' + str(ROOT / 'components/bsp/include'),
+                           '-I' + str(ROOT / 'components/passport_muse/sdk'),
+                           str(ROOT / 'components/passport_muse/sdk/muse_pairing_memory.cpp'),
+                           str(test), *objects, '-o', str(binary)], capture_output=True, text=True)
+    if link.returncode != 0 and 'libclang_rt.asan' in (link.stderr or ''):
+        link_flags = [f for f in link_flags if 'sanitize' not in f]
+        compile_flags = [f for f in flags if 'sanitize' not in f]
+        objects = []
+        if use_idf:
+            for name in ('base64', 'platform_util', 'constant_time'):
+                obj = directory / (name + '.o')
+                subprocess.run([CC, '-std=c11', *compile_flags, '-c',
+                                str(idf_mbedtls / 'library' / (name + '.c')), '-o', str(obj)], check=True)
+                objects.append(str(obj))
+        else:
+            obj = directory / 'mbedtls_base64.o'
+            subprocess.run([CC, '-std=c11', *compile_flags, '-c',
+                            str(vendor / 'mbedtls_base64.c'), '-o', str(obj)], check=True)
+            objects.append(str(obj))
+        subprocess.run([CXX, '-std=c++17', *link_flags,
+                        '-I' + str(ROOT / 'components/bsp/include'),
+                        '-I' + str(ROOT / 'components/passport_muse/sdk'),
+                        str(ROOT / 'components/passport_muse/sdk/muse_pairing_memory.cpp'),
+                        str(test), *objects, '-o', str(binary)], check=True)
+    elif link.returncode != 0:
+        raise subprocess.CalledProcessError(link.returncode, link.args, link.stdout, link.stderr)
     subprocess.run([str(binary)], check=True)
-print('Pairing base64: real mbedTLS, vectors/bounds/OOM/erasure, 3000 max-size decodes: PASS')
+print(f'Pairing base64: {backend}, vectors/bounds/OOM/erasure, 3000 max-size decodes: PASS')

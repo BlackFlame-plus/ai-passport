@@ -127,13 +127,21 @@ using esp_event_base_t=const char *;
 struct esp_websocket_event_data_t {const char *data_ptr; int data_len,payload_offset,payload_len;
     uint8_t op_code; struct {int error_type;} error_handle;};
 struct esp_websocket_client_config_t {const char *uri,*headers; int buffer_size,task_stack,
-    task_prio,ping_interval_sec,reconnect_timeout_ms,network_timeout_ms; bool disable_auto_reconnect; void (*crt_bundle_attach)();};
+    task_prio,ping_interval_sec,reconnect_timeout_ms,network_timeout_ms; bool disable_auto_reconnect; void (*crt_bundle_attach)();
+    void *ext_transport;};
 inline void esp_crt_bundle_attach() {}
 constexpr int WEBSOCKET_EVENT_ANY=0,WEBSOCKET_EVENT_CONNECTED=1,WEBSOCKET_EVENT_DISCONNECTED=2,
     WEBSOCKET_EVENT_DATA=3,WEBSOCKET_EVENT_ERROR=4,WEBSOCKET_EVENT_CLOSED=5,WEBSOCKET_EVENT_FINISH=6;
 inline bool mock_ws_connected=true;
+inline std::string mock_ws_uri;
+inline std::string mock_ws_headers;
 inline std::vector<std::string> mock_sent_text;
-inline void *esp_websocket_client_init(esp_websocket_client_config_t *) {return reinterpret_cast<void *>(1);}
+inline std::vector<std::string> mock_sent_bin;
+inline void *esp_websocket_client_init(esp_websocket_client_config_t *cfg) {
+    mock_ws_uri = cfg && cfg->uri ? cfg->uri : "";
+    mock_ws_headers = cfg && cfg->headers ? cfg->headers : "";
+    return reinterpret_cast<void *>(1);
+}
 inline int esp_websocket_client_start(void *) {return ESP_OK;}
 inline unsigned mock_ws_stops=0, mock_ws_destroys=0;
 inline unsigned mock_ws_pings=0;
@@ -154,7 +162,9 @@ inline void esp_websocket_register_events(void *,int,void (*)(void *,esp_event_b
 inline int esp_websocket_client_send_text(void *,const char *s,int n,TickType_t) {
     mock_sent_text.emplace_back(s,n); return n;
 }
-inline int esp_websocket_client_send_bin(void *,const char *,int n,TickType_t) {return n;}
+inline int esp_websocket_client_send_bin(void *,const char *s,int n,TickType_t) {
+    mock_sent_bin.emplace_back(s,n); return n;
+}
 constexpr int ESP_MAC_WIFI_STA=0;
 inline void esp_read_mac(uint8_t *out,int) {std::memset(out,0,6);}
 inline void esp_fill_random(void *out,size_t n) {std::memset(out,1,n);}

@@ -1,9 +1,8 @@
 #include "apps/xiaozhi/app_xiaozhi.h"
-#include "apps/xiaozhi/xiaozhi_protocol.h"
+#include "apps/xiaozhi/grok_protocol.h"
+#include "apps/xiaozhi/grok_config.h"
 #include "apps/xiaozhi/xiaozhi_audio.h"
 #include "apps/xiaozhi/xiaozhi_ui.h"
-#include "apps/xiaozhi/xiaozhi_ota.h"
-#include "apps/xiaozhi/xiaozhi_store.h"
 #include "wifi_manager.h"
 #include "bsp_audio.h"
 #include "launcher/settings.h"
@@ -43,7 +42,6 @@ namespace {
 
 using xiaozhi::EvType;
 using xiaozhi::Event;
-using xiaozhi::OtaResult;
 using xiaozhi::State;
 
 constexpr int kProtoQueueDepth = 8;  // text only; critical transitions use mailbox
@@ -57,15 +55,13 @@ constexpr size_t kControlTaskStack = 7168;
 constexpr uint32_t kLoopTickMs = 20;
 
 // 定时器（毫秒）
-constexpr int64_t kConnectTimeoutMs = 12000;    // 发起连接后等 hello 的上限
+constexpr int64_t kConnectTimeoutMs = 12000;    // 连上后等 session.updated 的上限
 constexpr int64_t kThinkingTimeoutMs = 50000;   // 弱网留出响应时间，仍防止永久卡死
 constexpr int64_t kListeningTimeoutMs = 30000;
 constexpr int64_t kSpeakingStallTimeoutMs = 30000; // no audio/PCM progress, not reply duration
 constexpr int64_t kReconnectDelayMs = 6000;     // 断线重连退避
-constexpr int64_t kActivationRepollMs = 30000;  // 等待用户绑定期重新查询的间隔
 constexpr int64_t kWifiRetryMs = 1000;
-constexpr int64_t kOtaRefreshMs = 10 * 60 * 1000;  // 连接参数缓存有效期（10 分钟）
-constexpr int kOtaRetryAfterFailures = 3;          // 连续失败几次后重新拉配置
+constexpr int kRestartAfterFailures = 3;
 
 enum class Cmd : uint8_t {
     Connect = 0,
@@ -109,8 +105,6 @@ int64_t s_reconnect_at_ms = 0;
 int64_t s_reconnect_delay_ms = kReconnectDelayMs;
 int64_t s_listening_since_ms = 0;
 int64_t s_next_connect_attempt_ms = 0;
-bool s_activation_pending = false;
-std::string s_activation_code;
 bool s_audio_ready = false;
 bool s_session_ready = false;
 bool s_audio_recovery_required = false;
@@ -122,17 +116,6 @@ bool s_conversation_active = false;
 // and audio reservation succeed. Background reconnects never open the mic.
 bool s_listen_after_connect = false;
 
-// 连接参数缓存：OTA 请求要跑一次 HTTPS（几百毫秒 + 约 30KB 堆），
-// 不能每次断线重连都来一遍。首次 / 过期 / 连续失败时才重新拉。
-bool s_cfg_valid = false;
-std::string s_cfg_url;
-std::string s_cfg_token;
-int s_cfg_version = 3;
-int64_t s_cfg_fetched_ms = 0;
-// 跨 App 切换沿用上次 OTA 结果：OTA 成功时已把 url/token/version 写进 NVS，
-// 退出时只释放堆字符串、记下这个标志；再次进入且未过期就直接用 NVS 配置连 WS，
-// 省掉一次 HTTPS/TLS 握手。用它连失败一次就回到重新拉 OTA。
-bool s_cfg_carried = false;
 int s_connect_failures = 0;
 
 int64_t now_ms() { return esp_timer_get_time() / 1000; }
@@ -232,72 +215,14 @@ void on_state_changed(State st) {
     }
 }
 
-// OTA 的 HTTPS 请求会跑一次完整的 mbedTLS 握手 —— 那是本固件里最吃栈的调用链
-// （实机实测：6144 字节栈不够，会栈溢出重启）。但它只在"取配置"时发生，跑完就该
-// 把栈还回去。所以放到一个用完即删的临时任务里，控制任务本身保持小栈。
-struct OtaJob {
-    xiaozhi::OtaOutcome out;
-    std::atomic<unsigned> refs{2};  // controller + worker
-    std::atomic<bool> done{false};
-};
-
-OtaJob *s_ota_job = nullptr;  // only controller owns this pointer
-std::atomic<bool> s_ota_worker_running{false};
-
-void release_ota_job(OtaJob *job) {
-    if (job->refs.fetch_sub(1) == 1) delete job;
-}
-
-void ota_worker(void *arg) {
-    auto *job = static_cast<OtaJob *>(arg);
-    job->out = xiaozhi::ota_fetch_config();
-    job->done.store(true);  // publishes out before controller copies it
-    release_ota_job(job);
-    s_ota_worker_running.store(false);
-    vTaskDelete(nullptr);
-}
-
-// 返回 false 表示这次没能拿到结果（含内存不足/超时）。
-bool fetch_ota_config(xiaozhi::OtaOutcome *out) {
-    // Keep a timed-out worker's owner until completion. No forced task deletion,
-    // leaked semaphore, concurrent use of OTA's static response, or permanent
-    // failure latch. A late result is consumed on the next retry/app opening.
-    const bool fresh = s_ota_job == nullptr;
-    if (fresh) {
-        if (s_ota_worker_running.load()) {
-            out->detail = "previous OTA request is finishing";
-            return false;
-        }
-        s_ota_job = new (std::nothrow) OtaJob{};
-        if (s_ota_job == nullptr) {
-            out->detail = "no memory for OTA job";
-            return false;
-        }
-        s_ota_worker_running.store(true);
-        if (xTaskCreate(ota_worker, "xzg_ota", 12288, s_ota_job, 4, nullptr) != pdPASS) {
-            s_ota_worker_running.store(false);
-            delete s_ota_job;
-            s_ota_job = nullptr;
-            out->detail = "task create failed";
-            return false;
-        }
-    }
-    const int64_t started = now_ms();
-    while (!s_ota_job->done.load()) {
-        if (!fresh || s_stop_requested || now_ms() - started >= 20000) {
-            out->detail = "OTA request still running; will retry after completion";
-            return false;
-        }
-        vTaskDelay(pdMS_TO_TICKS(50));
-    }
-    *out = s_ota_job->out;
-    release_ota_job(s_ota_job);
-    s_ota_job = nullptr;
-    // 强制让步给 FreeRTOS Idle 任务：ota_worker 自删后的 12KB 栈和 TCB 由 Idle 任务回收。
-    // control_task 优先级为 5，必须短时 delay 让 Idle 跑起来回收并合并堆块，
-    // 避免后续音频初始化申请 22KB 栈时因为旧栈未被释放而触发内存不足。
-    vTaskDelay(pdMS_TO_TICKS(60));
-    return true;
+void show_missing_key() {
+    s_cur_state = State::Disconnected;
+    xiaozhi::ui_set_state(State::Disconnected);
+    xiaozhi::ui_set_status_text("未配置密钥");
+    xiaozhi::ui_set_ai_text(
+        "请连接热点 Passport-WiFi，打开 192.168.4.1，在 Grok 一栏填写 xAI API Key。");
+    xiaozhi::ui_set_hint("填写后按确定重试");
+    schedule_reconnect(kReconnectDelayMs);
 }
 
 void do_connect() {
@@ -317,24 +242,35 @@ void do_connect() {
 
     // 客户端对象还在 → esp_websocket_client 正按自己的 reconnect_timeout_ms 重连，
     // 先别把它拆了重建（否则两边互相打断，恢复反而更慢）。连续失败多次才重建。
-    if (proto().HasClient() && s_connect_failures < kOtaRetryAfterFailures) {
+    if (proto().HasClient() && s_connect_failures < kRestartAfterFailures) {
         ESP_LOGI(TAG, "WebSocket client still present, letting it auto-reconnect");
         s_next_connect_attempt_ms = now_ms() + 2000;
         return;
     }
 
+    char key[256];
+    char proxy_host[16];
+    uint16_t proxy_port = 0;
+    const bool have_key = grok_copy_key(key, sizeof(key));
+    grok_proxy_get(proxy_host, sizeof(proxy_host), &proxy_port);
+    if (!have_key) {
+        std::memset(key, 0, sizeof(key));
+        show_missing_key();
+        return;
+    }
     if (!WifiManager::GetInstance().IsConnected()) {
+        std::memset(key, 0, sizeof(key));
         xiaozhi::ui_set_state(State::Disconnected);
         xiaozhi::ui_set_status_text("网络断开");
         s_next_connect_attempt_ms = now_ms() + kWifiRetryMs;
         return;
     }
 
-    // Rebuilding after repeated failures must stop the old auto-reconnecting
-    // TLS client before running another HTTPS handshake in this small heap.
+    // A dead client cannot reconnect on its own. Stop it before the next TLS handshake.
     if (proto().HasClient()) proto().Stop();
     if (s_audio_recovery_required && s_audio_ready) {
         if (!xiaozhi::AudioService::GetInstance().Deinit()) {
+            std::memset(key, 0, sizeof(key));
             schedule_reconnect(kReconnectDelayMs);
             return;
         }
@@ -343,93 +279,11 @@ void do_connect() {
     }
     s_retry_reason.clear();
 
-    const int64_t t = now_ms();
-    const bool carried = s_cfg_carried && s_connect_failures == 0;
-    const bool cfg_stale = (!s_cfg_valid && !carried) || (t - s_cfg_fetched_ms > kOtaRefreshMs) ||
-                           (s_connect_failures >= kOtaRetryAfterFailures);
-
-    // 1. 需要时先向后台换 websocket 配置。官方后台必须走这一步：
-    //    它才会返回 websocket{url,token,version}，或者在设备未绑定时返回
-    //    activation{code,message} 要求用户先绑定。
-    if (cfg_stale) {
-        xiaozhi::ui_set_status_text("正在准备连接");
-        s_cfg_carried = false;
-        xiaozhi::OtaOutcome ota;
-        if (!fetch_ota_config(&ota)) {
-            s_retry_reason = "无法连接服务器";
-            xiaozhi::ui_set_status_text(s_retry_reason);
-            schedule_reconnect(kReconnectDelayMs);
-            return;
-        }
-
-        if (ota.result == OtaResult::NeedsActivation) {
-            s_activation_pending = true;
-            s_activation_code = ota.activation_code;
-            if (!s_activation_code.empty()) {
-                ESP_LOGW(TAG, "Activation required, code=%s", s_activation_code.c_str());
-                // 验证码必须在消息区完整可见(状态胶囊太窄会截断),并给出
-                // 普通用户的真实绑定路径——MAC 直绑是开发者后门,用户没有。
-                xiaozhi::ui_set_status_text("待激活 " + s_activation_code);
-                xiaozhi::ui_set_ai_text(
-                    "设备尚未绑定。手机打开 xiaozhi.me，登录后「添加设备」，"
-                    "输入验证码 " + s_activation_code +
-                    "。绑定后约 30 秒内自动连接。");
-                xiaozhi::ui_set_hint("绑定后将自动连接");
-            } else {
-                ESP_LOGW(TAG, "Activation required (no code returned)");
-                xiaozhi::ui_set_status_text("等待绑定设备");
-                xiaozhi::ui_set_ai_text(ota.activation_message.empty()
-                                            ? "设备尚未激活，请打开 xiaozhi.me 添加本设备。"
-                                            : ota.activation_message);
-            }
-            s_next_connect_attempt_ms = now_ms() + kActivationRepollMs;
-            return;
-        }
-        s_activation_pending = false;
-
-        if (ota.result == OtaResult::Ok) {
-            s_cfg_url = ota.url;
-            s_cfg_token = ota.token;
-            s_cfg_version = (ota.version > 0) ? ota.version : 3;
-            s_cfg_valid = true;
-            s_cfg_fetched_ms = t;
-            s_connect_failures = 0;
-            ESP_LOGI(TAG, "OTA config accepted: url=%s version=%d token=%s",
-                     s_cfg_url.c_str(), s_cfg_version, s_cfg_token.empty() ? "(none)" : "(set)");
-        } else {
-            ESP_LOGW(TAG, "OTA gave no websocket config (%s); falling back to NVS/defaults",
-                     ota.detail.c_str());
-        }
-    }
-
-    // 2. 决定最终连接参数：OTA/缓存 > 本应用 NVS > 官方同名 NVS > 内置默认
-    std::string url = s_cfg_url;
-    std::string token = s_cfg_token;
-    int version = s_cfg_version;
-
-    if (url.empty()) url = store_get_string(kNsXiaozhi, "ws_url", "");
-    if (url.empty()) url = store_get_string(kNsWebsocket, "url", "");
-    if (url.empty()) url = "wss://api.tenclass.net/xiaozhi/v1/";
-
-    if (token.empty()) token = store_get_string(kNsXiaozhi, "token", "");
-    if (token.empty()) token = store_get_string(kNsWebsocket, "token", "");
-    // 注意：不再回落到字面量 "test-token"。没有令牌就干脆不发 Authorization 头，
-    // 让服务端按匿名/未激活处理，并在屏幕上明确告知，而不是拿假令牌静默失败。
-
-    if (version <= 0) version = store_get_int(kNsXiaozhi, "version", 0);
-    if (version <= 0) version = store_get_int(kNsWebsocket, "version", 0);
-    if (version <= 0) version = 3;
-
-    ESP_LOGI(TAG, "Connecting: url=%s version=%d token=%s (free=%u largest=%u)",
-             url.c_str(), version, token.empty() ? "(none)" : "(set)",
-             (unsigned)esp_get_free_heap_size(),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
-
-    // 音频子系统在"OTA 临时任务的 12KB 栈已经归还"之后才初始化：
-    // 常驻录音任务要一块 16KB 连续栈，越早、堆越完整时申请越稳。
+    // The resident audio worker is created here, while the heap is still one piece.
     if (!s_audio_ready) {
         if (xiaozhi::AudioService::GetInstance().Init() != ESP_OK) {
-            ESP_LOGE(TAG, "Audio init failed; Xiaozhi stays unusable");
+            ESP_LOGE(TAG, "Audio init failed; Grok stays unusable");
+            std::memset(key, 0, sizeof(key));
             s_retry_reason = "音频启动失败，自动重试";
             xiaozhi::ui_set_status_text(s_retry_reason);
             schedule_reconnect(kReconnectDelayMs);
@@ -438,8 +292,10 @@ void do_connect() {
         s_audio_ready = true;
     }
 
-    xiaozhi::ui_set_status_text("正在连接小智");
-    if (!proto().Start(url, token, version)) {
+    xiaozhi::ui_set_status_text(proxy_host[0] ? "正在通过代理连接 Grok" : "正在连接 Grok");
+    const bool started = proto().Start(key, proxy_host, proxy_port);
+    std::memset(key, 0, sizeof(key));
+    if (!started) {
         s_retry_reason = "无法连接服务器";
         xiaozhi::ui_set_status_text(s_retry_reason);
         s_connect_failures++;
@@ -513,12 +369,14 @@ int drain_audio_tx() {
 }
 
 void do_stop_listen() {
-    if (s_cur_state != State::Listening) return;
-    // auto 对话模式下，OK 表示结束整段对话，而不是提交当前一句（断句由服务端
-    // VAD 完成）。先彻底停录音，再 abort，避免退出后仍继续上传声音。
+    if (proto().GetState() != State::Listening) return;
+    // Push-to-talk: OK ends the utterance, commits it, and waits for a reply.
     s_conversation_active = false;
     xiaozhi::AudioService::GetInstance().StopRecording();
-    proto().TriggerAbort();
+    while (drain_audio_tx() > 0) { }
+    if (!proto().TriggerStopListen()) {
+        xiaozhi::ui_set_status_text("发送失败，请重试");
+    }
 }
 
 void do_abort() {
@@ -541,25 +399,12 @@ void do_stop_app() {
     s_listen_after_connect = false;
     s_conversation_requested = false;
     s_session_ready = false;
-    // The worker owns a second reference and completes without this task. Keep
-    // a global running flag so the next app cannot reuse OTA's response buffer.
-    if (s_ota_job != nullptr) {
-        release_ota_job(s_ota_job);
-        s_ota_job = nullptr;
-    }
     xiaozhi::AudioService::GetInstance().StopRecording();
     xiaozhi::AudioService::GetInstance().AbortPlayback();
     if (s_protocol_ready) {
         proto().Stop();
     }
     s_protocol_ready = false;
-    // Reconnects within this app retain the cache; leaving returns all strings
-    // allocated during OTA/TLS so they cannot split the next app's codec heap.
-    if (s_cfg_valid) s_cfg_carried = true;
-    s_cfg_valid = false;
-    std::string{}.swap(s_cfg_url);
-    std::string{}.swap(s_cfg_token);
-    std::string{}.swap(s_activation_code);
     std::string{}.swap(s_retry_reason);
     // 连常驻录音任务和 PCM 缓冲一起还给堆：切到别的 App 后小智不该占着内存
     if (s_audio_ready) {
@@ -571,7 +416,6 @@ void do_stop_app() {
     }
     // The registry keeps the last UI alive until its safe screen handoff.
     clear_timers();
-    s_activation_pending = false;
 
     ESP_LOGI(TAG, "Xiaozhi app stopped cleanly. free heap=%u largest=%u",
              (unsigned)esp_get_free_heap_size(),
@@ -593,8 +437,16 @@ void handle_proto_event(const Event &ev) {
         if (proto().HandshakeDone()) break;  // stale connected before queued hello
         s_connect_pending = true;
         s_connect_started_ms = now_ms();
-        ESP_LOGI(TAG, "Socket connected, waiting for server hello...");
+        ESP_LOGI(TAG, "Socket connected, sending session.update");
         xiaozhi::ui_set_status_text("正在建立连接");
+        if (!proto().ConfigureSession()) {
+            s_connect_pending = false;
+            s_connect_failures++;
+            proto().Stop();
+            s_retry_reason = "会话配置失败";
+            xiaozhi::ui_set_status_text(s_retry_reason);
+            schedule_reconnect(kReconnectDelayMs);
+        }
         break;
 
     case EvType::HelloOk:
@@ -672,6 +524,10 @@ void handle_proto_event(const Event &ev) {
 
     case EvType::AiSentence:
         xiaozhi::ui_set_ai_text(ev.text);
+        break;
+
+    case EvType::AiDelta:
+        xiaozhi::ui_append_ai_text(ev.text);
         break;
 
     case EvType::LlmEmotion:
@@ -851,7 +707,6 @@ void control_task(void *arg) {
         process_conversation_request();
 
         // 录音帧的发送在这里完成（不是录音任务），见 drain_audio_tx 的说明
-        if (proto().ProcessMcp()) did_work = true;
         if (drain_audio_tx() > 0) did_work = true;
 
         tick();
@@ -932,7 +787,6 @@ void xiaozhi_app_start(void) {
     clear_timers();
     s_reconnect_at_ms = 0;
     s_next_connect_attempt_ms = 0;
-    s_activation_pending = false;
     s_conversation_active = false;
     s_session_ready = false;
     s_audio_recovery_required = false;
@@ -967,9 +821,7 @@ bool xiaozhi_app_prepare_stop(void) {
     if (!s_control_running.load() && s_audio_ready) {
         if (xiaozhi::AudioService::GetInstance().Deinit()) s_audio_ready = false;
     }
-    // OTA owns its own stack and HTTPS client. It must also finish before a
-    // different app allocates its audio/TLS working set.
-    return !s_control_running.load() && !s_ota_worker_running.load() && !s_audio_ready;
+    return !s_control_running.load() && !s_audio_ready;
 }
 
 void xiaozhi_app_stop(void) {
@@ -1017,9 +869,9 @@ void xiaozhi_app_on_key(uint8_t btn, app_btn_event_t event, uint16_t mv) {
 
 const passport_app_t g_xiaozhi_app = {
     .id = APP_ID_XIAOZHI,
-    .name = "小智 AI",
-    .en_name = "XIAOZHI",
-    .desc = "与小智连续语音对话\n联网使用，自动断句",
+    .name = "Grok",
+    .en_name = "GROK",
+    .desc = "按确定说话\n再按确定等待回复",
     .tag = "直连",
     .theme_color = 0x38BDF8,
     .init = xiaozhi_app_init,
