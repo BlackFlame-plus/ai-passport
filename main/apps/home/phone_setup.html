@@ -136,6 +136,13 @@ input[type=range]{width:100%;min-height:36px}.check{display:flex;align-items:cen
 <p id="voiceCopyStatus" class="status" role="status" aria-live="polite"></p>
 </div></details>
 
+<details id="grokSection"><summary><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v4M8 5.5l4 1.5 4-1.5M7 10h10v8a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2z"/><path d="M9 14h.01M15 14h.01"/></svg></span>Grok 语音<small id="grokState">需要 API Key</small></summary><div class="detail-body">
+<p class="help">在 <a href="https://console.x.ai" target="_blank" rel="noopener noreferrer">console.x.ai</a> 申请 xAI API Key，填到这里后保存。设备上的 Grok 用这个密钥连接官方语音接口。按用量计费，当前官方价格大约每分钟 0.08 美元。</p>
+<p id="grokSaved" class="saved" role="status">正在读取设备中的 Grok 配置…</p>
+<div><label for="grokKey">xAI API Key</label><input id="grokKey" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="255" placeholder="xai-…" aria-describedby="grokSaved" disabled></div>
+<div class="proxy-settings"><p class="field-title">电脑代理（可选）</p><div class="pair proxy"><div><label for="grokProxyHost">电脑 IP</label><input id="grokProxyHost" inputmode="decimal" autocomplete="off" maxlength="15" placeholder="192.168.1.20" aria-label="Grok 代理 IP"></div><div><label for="grokProxyPort">端口</label><input id="grokProxyPort" type="number" min="1" max="65535" inputmode="numeric" placeholder="7897" aria-label="Grok 代理端口"></div></div><p class="help">api.x.ai 直连不通时，填写电脑上 HTTP 代理的局域网 IP 和端口。清空 IP 后保存即切回直连。</p></div>
+<button id="saveGrok" type="button" class="secondary" disabled>保存 Grok 配置</button><p id="grokStatus" class="status" role="status" aria-live="polite"></p></div></details>
+
 <details id="museSection"><summary><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 4v-4A1.5 1.5 0 0 1 4 14.5z"/><path d="M12 6.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z" fill="currentColor" stroke="none"/></svg></span>Muse 助手<small id="museState">可选配置</small></summary><div class="detail-body">
 <p class="help">需要 Muse 账号和 SDK Token（在 gadgets.muse.ai 申请）。保存后，在手机 Muse 中添加设备。<a href="https://github.com/manchunx7-bit/ai-passport-muse" target="_blank" rel="noopener noreferrer">查看教程</a></p>
 <p id="museSaved" class="saved" role="status">正在读取设备中的 Muse 配置…</p>
@@ -304,6 +311,57 @@ function loadMuse(restore=false){
 $('retryMuse').onclick=()=>loadMuse();$('useSavedMuse').onclick=()=>loadMuse(true);
 $('museSection').ontoggle=()=>{if($('museSection').open&&!museLoaded)return loadMuse()};
 
+let grokKeySet=false,grokSaving=false,grokLoaded=false,grokLoading=null,grokProxyEdited=false;
+let savedGrokHost='',savedGrokPort=0;
+function lockGrok(){for(const id of ['saveGrok','grokKey','grokProxyHost','grokProxyPort'])$(id).disabled=grokSaving||!!grokLoading}
+function applyGrokConfig(g,restore=false){
+ if(typeof g.key_set!=='boolean'||typeof g.proxy_host!=='string'||!Number.isInteger(g.proxy_port))throw new Error('invalid Grok configuration');
+ grokKeySet=g.key_set;savedGrokHost=g.proxy_host;savedGrokPort=g.proxy_port;grokLoaded=true;
+ $('grokState').textContent=grokKeySet?'密钥已保存':'需要 API Key';
+ $('grokSaved').textContent=(grokKeySet?'API Key 已保存在设备上，页面不会再显示它':'尚未保存 API Key')+' · '+(savedGrokHost?'电脑代理 '+savedGrokHost+':'+savedGrokPort:'直连 api.x.ai');
+ $('grokKey').placeholder=grokKeySet?'已保存，留空沿用；填写新 Key 可更换':'xai-…';
+ if(restore||!grokProxyEdited){$('grokProxyHost').value=savedGrokHost;$('grokProxyPort').value=savedGrokPort||'';grokProxyEdited=false}
+}
+for(const id of ['grokProxyHost','grokProxyPort'])$(id).oninput=()=>{grokProxyEdited=true};
+function pendingGrokConfig(){
+ const host=$('grokProxyHost').value.trim(),port=host?Number($('grokProxyPort').value):0;
+ return !!$('grokKey').value.trim() || (grokLoaded && (host!==savedGrokHost || port!==savedGrokPort)) || (!grokLoaded && !!host);
+}
+function proxyFieldsOk(host,port){
+ if(!host)return true;
+ return /^(?:\d{1,3}\.){3}\d{1,3}$/.test(host)&&host.split('.').every(n=>Number(n)<=255)&&Number(host.split('.')[0])!==127&&Number(host.split('.')[0])!==0&&Number(host.split('.')[0])<224&&Number(host.split('.').at(-1))!==255&&Number.isInteger(port)&&port>=1&&port<=65535;
+}
+async function saveGrokConfig(onlyPending=false){
+ if(grokSaving)throw new Error('Grok 配置正在保存，请稍等后再完成设置。');
+ if(onlyPending&&!pendingGrokConfig())return;
+ if(grokLoading)await grokLoading;
+ if(!grokLoaded&&!await loadGrok())throw new Error('请先重新读取已保存的 Grok 配置，再保存。');
+ const key=$('grokKey').value.trim(),host=$('grokProxyHost').value.trim(),port=host?Number($('grokProxyPort').value):0;
+ if(key&&(key.length<16||key.length>255||/[\s"\\]/.test(key)))throw new Error('API Key 应为 16–255 位、没有空格的一串字符。');
+ if(!key&&!grokKeySet)throw new Error('请先填写 xAI API Key。');
+ if(!proxyFieldsOk(host,port))throw new Error('请填写电脑局域网 IPv4 地址和有效端口。');
+ grokSaving=true;lockGrok();
+ try{
+  const config={proxy_host:host,proxy_port:port};if(key)config.api_key=key;
+  const g=await api('/api/grok',config);applyGrokConfig(g,true);$('grokKey').value='';
+  say('grokStatus','已保存。回到设备打开 Grok，按确定开始说话。');
+ }finally{grokSaving=false;lockGrok()}
+}
+$('saveGrok').onclick=async()=>{try{await saveGrokConfig()}catch(e){say('grokStatus',e.message,true)}};
+function loadGrok(restore=false){
+ if(grokSaving)return Promise.resolve(false);
+ if(grokLoading)return grokLoading;
+ grokLoading=(async()=>{try{
+  const g=await api('/api/grok');applyGrokConfig(g,restore);if(restore)$('grokKey').value='';
+  say('grokStatus',restore?'已恢复设备中保存的配置，密钥不会显示在页面上。':'');return true;
+ }catch(e){
+  if(!grokLoaded){$('grokState').textContent='待读取';$('grokSaved').textContent='尚未读取到设备配置，请重试。'}
+  say('grokStatus','读取失败，设备中已保存的密钥不会被清除。请重新打开这一栏。',true);return false;
+ }finally{grokLoading=null;lockGrok()}})();
+ lockGrok();return grokLoading;
+}
+$('grokSection').ontoggle=()=>{if($('grokSection').open&&!grokLoaded)return loadGrok()};
+
 // Portrait cropping happens on the phone, preserving the device's small memory budget.
 const VP={w:192,h:276},PORTRAIT={w:96,h:138};let portraitPalette=[0x03120b,0x3a5b45,0x719c80,0xa8edbb],portraitSubjectPalette=[0x254d36,0x4b8060,0x80b795,0xa8edbb];let zoom=1,ox=0,oy=0,base=1,portrait=null,shareImg=null,imageLoading=0,portraitPreset=3,portraitSampleCache=null,portraitPreparedCache=null;
 const CARD_MAX=6,CARD_BYTES=24576;let cards=[],cardsDirty=false,cardsReady=false,cardBusy=false,replaceSlot=null,cardStorage=null;
@@ -438,7 +496,7 @@ async function shareBlob(){
  }
  throw new Error('名片图片过于复杂，压缩后仍较大，请换一张图片。');
 }
-async function save(){if(imageLoading||cardBusy){say('saveStatus','图片还在读取，请稍等。',true);return}if(!verified&&!hasSaved){step(1);say('networkStatus','请先连接 Wi-Fi。',true);return}let selected;try{selected=selectedCityProfile()}catch(e){say('saveStatus',e.message,true);return}const profile={name:$('name').value,signature:$('sig').value,address:loadedProfile.address||'',...selected};for(const [key,max] of [['name',31],['signature',95],['address',127],['city',47],['region',31],['radio_city',47],['lat',15],['lon',15]])if(bytes(profile[key])>max){say('saveStatus','有一项内容过长，请缩短后再保存。',true);return}$('save').disabled=true;$('back').disabled=true;try{renderCards();if(pendingMuseConfig()){say('saveStatus','正在保存 Muse 配置…');await saveMuseConfig(true)}say('saveStatus','正在保存个人资料…');await api('/api/profile',profile);if(portrait){say('saveStatus','正在保存人像…');await api('/api/avatar',portraitPacked())}await saveCards();say('saveStatus','正在完成设置…');await api('/api/finish',{});$('doneName').textContent=profile.name||'AI 护照';$('doneSummary').textContent='个人资料'+(portrait?'、人像':'')+(cards.length?'、'+cards.length+' 张彩色名片':'')+'已保存';step(3)}catch(e){say('saveStatus',e.message+' 尚未完成的内容可再次保存。',true)}finally{$('save').disabled=false;$('back').disabled=false;renderCards()}}
+async function save(){if(imageLoading||cardBusy){say('saveStatus','图片还在读取，请稍等。',true);return}if(!verified&&!hasSaved){step(1);say('networkStatus','请先连接 Wi-Fi。',true);return}let selected;try{selected=selectedCityProfile()}catch(e){say('saveStatus',e.message,true);return}const profile={name:$('name').value,signature:$('sig').value,address:loadedProfile.address||'',...selected};for(const [key,max] of [['name',31],['signature',95],['address',127],['city',47],['region',31],['radio_city',47],['lat',15],['lon',15]])if(bytes(profile[key])>max){say('saveStatus','有一项内容过长，请缩短后再保存。',true);return}$('save').disabled=true;$('back').disabled=true;try{renderCards();if(pendingGrokConfig()){say('saveStatus','正在保存 Grok 配置…');await saveGrokConfig(true)}if(pendingMuseConfig()){say('saveStatus','正在保存 Muse 配置…');await saveMuseConfig(true)}say('saveStatus','正在保存个人资料…');await api('/api/profile',profile);if(portrait){say('saveStatus','正在保存人像…');await api('/api/avatar',portraitPacked())}await saveCards();say('saveStatus','正在完成设置…');await api('/api/finish',{});$('doneName').textContent=profile.name||'AI 护照';$('doneSummary').textContent='个人资料'+(portrait?'、人像':'')+(cards.length?'、'+cards.length+' 张彩色名片':'')+'已保存';step(3)}catch(e){say('saveStatus',e.message+' 尚未完成的内容可再次保存。',true)}finally{$('save').disabled=false;$('back').disabled=false;renderCards()}}
 $('save').onclick=()=>{cancelLocation();return save()};
 async function load(){try{const [profile,state]=await Promise.all([api('/api/profile'),api('/api/setup')]);await loadCities();for(const [id,key] of [['name','name'],['sig','signature']])$(id).value=profile[key]||'';if(Array.isArray(profile.portrait_palette)&&profile.portrait_palette.length===4)portraitPalette=profile.portrait_palette;if(Array.isArray(profile.portrait_subject_palette)&&profile.portrait_subject_palette.length===4)portraitSubjectPalette=profile.portrait_subject_palette;previewPortrait();restoreCity(profile);$('avatarState').textContent=profile.avatar?'已有，可替换':'可稍后上传';await loadCards();hasSaved=state.saved_network;$('reuse').hidden=!hasSaved;$('keepSaved').hidden=!hasSaved;$('savedField').hidden=!hasSaved;const selected=$('savedNetwork').value;$('savedNetwork').replaceChildren(new Option('自动选择附近已保存的网络',''));for(const name of state.saved_networks||[])$('savedNetwork').add(new Option(name,name));if((state.saved_networks||[]).includes(selected))$('savedNetwork').value=selected;$('connect').disabled=false;say('networkStatus','');if(state.finishing){step(3);return}if(state.state==='connected')networkReady('已连接 '+state.ssid);else if(state.state==='connecting'){lockNetwork(true);polls=0;pollTimer=setTimeout(poll,1000)}await scan()}catch(e){say('networkStatus','无法读取设备。请确认手机已连接设备热点，然后刷新页面。',true)}}
 $('copyVoiceTutorial').onclick=async()=>{

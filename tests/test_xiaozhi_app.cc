@@ -1,7 +1,7 @@
 #include "mock_platform.h"
 #define private public
 #include "apps/xiaozhi/xiaozhi_audio.h"
-#include "apps/xiaozhi/xiaozhi_protocol.h"
+#include "apps/xiaozhi/grok_protocol.h"
 #undef private
 #include "../main/apps/xiaozhi/app_xiaozhi.cc"
 
@@ -11,7 +11,8 @@ int store_get_int(const char *,const char *,int v) {return v;}
 bool store_set_string(const char *,const char *,const std::string &) {return true;}
 bool store_set_int(const char *,const char *,int) {return true;}
 bool store_erase(const char *,const char *) {return true;}
-static int aborts=0,listen_starts=0,record_starts=0;
+static int aborts=0,listen_starts=0,record_starts=0,commits=0;
+static bool key_present=true;
 static int connection_reads=0;
 static bool socket_alive=true;
 static int connection_starts=0;
@@ -24,12 +25,13 @@ namespace xiaozhi {
 Protocol::Protocol() {}
 Protocol::~Protocol() {}
 bool Protocol::IsConnected() const {++connection_reads;return client_!=nullptr && socket_alive;}
-bool Protocol::Start(const std::string &,const std::string &,int) {++connection_starts;client_=reinterpret_cast<void *>(1);needs_restart_=false;hello_ok_=false;state_=State::Connecting;return true;}
+bool Protocol::Start(const std::string &,const char *,uint16_t) {++connection_starts;client_=reinterpret_cast<void *>(1);needs_restart_=false;hello_ok_=false;state_=State::Connecting;return true;}
 void Protocol::Stop() {client_=nullptr;hello_ok_=false;state_=State::Disconnected;needs_restart_=true;}
 void Protocol::SetState(State s) {state_=s;}
 bool Protocol::PopCriticalEvent(Event *) {return false;}
-bool Protocol::ProcessMcp() {return false;}
+bool Protocol::ConfigureSession() {return true;}
 bool Protocol::TriggerStartListen() {++listen_starts;state_=State::Listening;return true;}
+bool Protocol::TriggerStopListen() {++commits;state_=State::Thinking;return true;}
 bool Protocol::TriggerAbort() {++aborts;state_=State::Idle;return true;}
 bool Protocol::SendAudio(const uint8_t *,size_t) {return true;}
 AudioService::AudioService() {}
@@ -48,12 +50,22 @@ void AudioService::AbortPlayback() {is_playing_=false;}
 bool AudioService::PopEncodedFrame(uint8_t *,size_t,size_t *) {return false;}
 bool AudioService::HasPendingPlayback() const {return false;}
 void AudioService::SetPlaybackSampleRate(int) {}
-OtaOutcome ota_fetch_config() {OtaOutcome r;r.result=OtaResult::Ok;r.url="wss://mock";return r;}
 void ui_init() {} void ui_show() {} void ui_hide() {}
 void ui_set_state(State state) {if(state==State::Idle)idle_ui_saw_playback=AudioService::GetInstance().IsPlaying();}
 void ui_set_emotion(const char *) {} void ui_set_status_text(const std::string &s) {status=s;}
 void ui_set_user_text(const std::string &) {} void ui_set_ai_text(const std::string &) {}
+void ui_append_ai_text(const std::string &) {}
 void ui_set_hint(const std::string &) {} void ui_clear_text() {} void ui_set_volume(unsigned) {}
+}
+bool grok_copy_key(char *out, size_t cap) {
+    const char *key="xai-test-key-0123456789";
+    if (!key_present || cap<=std::strlen(key)) return false;
+    std::memcpy(out, key, std::strlen(key)+1);
+    return true;
+}
+void grok_proxy_get(char *host, size_t cap, uint16_t *port) {
+    if (host && cap) host[0]='\0';
+    if (port) *port=0;
 }
 
 static void connected(bool ready) {
@@ -107,7 +119,6 @@ int main() {
     // and eventual success through the production command handler.
     proto().Stop();s_audio_ready=false;s_session_ready=false;
     s_audio_recovery_required=false;s_connect_failures=0;
-    s_cfg_valid=true;s_cfg_fetched_ms=mock_time;s_cfg_url="wss://mock";
     audio_init_ok=false;do_connect();
     assert(!s_audio_ready && !s_session_ready);
     assert(status=="音频启动失败，自动重试" && s_reconnect_at_ms>mock_time);
@@ -121,7 +132,6 @@ int main() {
     // audio resources are ready, without leaving/reopening the application.
     connected(true);proto().needs_restart_=true;proto().hello_ok_=false;
     proto().SetState(State::Disconnected);socket_alive=false;s_connect_failures=0;
-    s_cfg_valid=true;s_cfg_fetched_ms=mock_time;s_cfg_url="wss://mock";
     const int starts_before=connection_starts, recordings_before=record_starts;
     handle_proto_event(Event{EvType::Disconnected,State::Disconnected,{}});
     handle_cmd(Cmd::ToggleListen);
@@ -167,7 +177,6 @@ int main() {
     xQueueReset(s_cmd_q);
     for(int i=0;i<kCmdQueueDepth;++i) post_cmd(Cmd::Connect);
     connected(false);proto().Stop();s_connect_failures=0;s_audio_recovery_required=false;
-    s_cfg_valid=true;s_cfg_fetched_ms=mock_time;s_cfg_url="wss://mock";
     const int before_auto=record_starts,before_connect=connection_starts;
     xiaozhi_app_request_conversation();process_conversation_request();
     assert(connection_starts==before_connect+1&&s_listen_after_connect);
@@ -191,39 +200,23 @@ int main() {
     xiaozhi_app_request_conversation();process_conversation_request();
     assert(record_starts==before_auto+2&&!s_conversation_requested);
     do_stop_app();assert(!s_listen_after_connect);
-    // Re-entry within the refresh window reuses the OTA result persisted in
-    // NVS (no second HTTPS); one failed attempt with it fetches OTA again.
-    assert(s_cfg_carried&&!s_cfg_valid&&s_cfg_url.empty());
-    {const unsigned otas=mock_task_creations;const int starts=connection_starts;
-     proto().Stop();s_stop_requested=false;s_connect_failures=0;do_connect();
-     assert(mock_task_creations==otas&&connection_starts==starts+1);
-     proto().Stop();s_connect_failures=1;mock_on_wait=[] {if(mock_pending_task) mock_run_task();};
-     do_connect();mock_on_wait={};
-     assert(mock_task_creations==otas+1&&connection_starts==starts+2&&s_cfg_valid&&!s_cfg_carried);
-     do_stop_app();assert(s_cfg_carried);}
+    // A missing key stays on the setup hint and never opens a socket.
+    key_present=false;proto().Stop();s_audio_ready=false;s_session_ready=false;
+    s_stop_requested=false;s_connect_failures=0;s_reconnect_at_ms=0;
+    const int before_missing=connection_starts;
+    do_connect();
+    assert(connection_starts==before_missing && !s_audio_ready && status.find("密钥")!=std::string::npos);
+    key_present=true;s_reconnect_at_ms=0;do_connect();
+    assert(connection_starts==before_missing+1 && s_audio_ready);
+    connected(true);proto().SetState(State::Listening);s_cur_state=State::Listening;
+    const int aborts_before_commit=aborts;
+    do_stop_listen();
+    assert(commits==1 && aborts==aborts_before_commit && proto().GetState()==State::Thinking);
+    do_stop_app();
     s_control_running=false;s_app_active=true;xQueueReset(s_cmd_q);
-
-    // OTA completion, timeout/late completion, creation failure and app exit
-    // all execute the production ownership code under ASan/UBSan.
-    s_stop_requested=false;xiaozhi::OtaOutcome outcome;
-    mock_on_wait=[] {if(mock_pending_task) mock_run_task();};
-    assert(fetch_ota_config(&outcome));assert(!s_ota_job && !s_ota_worker_running);
-    mock_on_wait={};const unsigned before=mock_task_creations;
-    assert(!fetch_ota_config(&outcome));assert(s_ota_job && s_ota_worker_running);
-    assert(!fetch_ota_config(&outcome));assert(mock_task_creations==before+1);
-    mock_run_task();assert(fetch_ota_config(&outcome));assert(!s_ota_job);
-    mock_task_fail=true;assert(!fetch_ota_config(&outcome));assert(!s_ota_job && !s_ota_worker_running);
-    mock_task_fail=false;s_stop_requested=true;
-    assert(!fetch_ota_config(&outcome));assert(s_ota_job);
-    do_stop_app();assert(!s_ota_job && s_ota_worker_running);
-    s_stop_requested=false;assert(!fetch_ota_config(&outcome)); // no concurrent old/new OTA
-    mock_run_task();mock_on_wait=[] {if(mock_pending_task) mock_run_task();};
-    assert(fetch_ota_config(&outcome));assert(!s_ota_job && !s_ota_worker_running);
-    // No successor may start while the control or OTA worker still owns memory.
     s_app_active=true;s_control_running=true;s_audio_ready=false;
     assert(!xiaozhi_app_prepare_stop());assert(s_stop_requested);
-    s_control_running=false;s_ota_worker_running=true;
-    assert(!xiaozhi_app_prepare_stop());s_ota_worker_running=false;
+    s_control_running=false;
     assert(xiaozhi_app_prepare_stop());
     // Failed startup remains a usable retry page, rather than a frozen old UI.
     s_ctl_task=nullptr;s_app_active=false;mock_task_fail=true;
@@ -234,5 +227,5 @@ int main() {
     assert(s_proto_q==&s_proto_queue_storage && s_cmd_q==&s_cmd_queue_storage);
     assert(s_stopped_sem==&s_stopped_storage);
     xQueueReset(s_proto_q);xQueueReset(s_cmd_q);
-    std::puts("Xiaozhi controller: long playback, readiness, allocation failure, OTA lifecycle PASS");
+    std::puts("Grok controller: long playback, readiness, missing key, push-to-talk PASS");
 }

@@ -6,7 +6,7 @@
 
 Community firmware for the FoloToy AI Passport, based on ESP32-C3 with 8 MB Flash. It brings thirteen apps together with shared settings, Wi-Fi setup, themes, audio, battery reporting, and power management.
 
-**Ask Xiaozhi to adjust the volume, play music or radio, and set reminders on the device.**
+**Ask Grok to adjust the volume, play music or radio, and set reminders on the device.**
 
 > **Branch note.** `feature/passport-os` in [BlackFlame-plus/ai-passport](https://github.com/BlackFlame-plus/ai-passport) is derived from [manchunx7-bit/passport-os](https://github.com/manchunx7-bit/passport-os) (MIT). The Passport OS `LICENSE`, copyright, and attribution are unchanged. This is a long-lived variant line and is not the official FoloToy AI Passport `main` baseline.
 
@@ -14,13 +14,13 @@ Community firmware for the FoloToy AI Passport, based on ESP32-C3 with 8 MB Flas
 
 Thank you to everyone who has enjoyed the project and shared feedback. I started Passport OS to make a small device I would use regularly, then selected thirteen functions and apps through repeated experiments.
 
-One part I especially enjoy is letting Xiaozhi connect these functions. While chatting, you can ask to hear music, save a task, or start a focus session, and Xiaozhi calls the device's functions to carry out the request.
+One part I especially enjoy is letting Grok connect these functions. While chatting, you can ask to hear music, save a task, or start a focus session, and Grok calls the device's functions to carry out the request.
 
 People have suggested many personal improvements. Because everyone uses the hardware differently, sharing the source lets you add what you need, remove what you do not, and make a version that fits you. Have fun using and modifying it.
 
-## Ask Xiaozhi to operate the device
+## Ask Grok to operate the device
 
-**Xiaozhi is the device's voice control entry point.** Double-press the OK button to enter a conversation, then use everyday language to adjust settings, open apps, play media, or manage tasks.
+**Grok is the device's voice control entry point.** Double-press the OK button to enter a conversation, then use everyday language to adjust settings, open apps, play media, or manage tasks.
 
 | Example request | Device action |
 | --- | --- |
@@ -34,7 +34,7 @@ People have suggested many personal improvements. Because everyone uses the hard
 
 You can also ask for today's AI news. Robot expressions and an audio waveform follow listening and speech, longer text expands into a reading area, and all four themes are supported.
 
-Voice tools require a network connection and Xiaozhi configuration. NetEase playback also depends on your account and available tracks; radio depends on the online directory. Opening another app or starting media playback ends the current Xiaozhi conversation. Double-press OK again for further voice control. The device must remain powered on for reminders to trigger.
+Voice tools require a network connection and your own xAI API Key on the phone setup page. NetEase playback also depends on your account and available tracks; radio depends on the online directory. Opening another app or starting media playback ends the current Grok conversation. Double-press OK again for further voice control. The device must remain powered on for reminders to trigger.
 
 ## Thirteen apps
 
@@ -43,7 +43,7 @@ Voice tools require a network connection and Xiaozhi configuration. NetEase play
 | Home | Clock, profile, portraits, cards, weather, and air quality | Network for weather and air quality |
 | Radio | City and station selection, playback, and sleep timer | Wi-Fi and available online stations |
 | AI Voice | Hardware microphone and configurable desktop hotkeys | Windows companion program |
-| Xiaozhi AI | Voice conversations, volume and brightness control, app opening, music and radio requests, timers, reminders, and lists | Network and Xiaozhi configuration; media needs its corresponding service |
+| Grok | Voice conversations, volume and brightness control, app opening, music and radio requests, timers, reminders, and lists | Network and your own xAI API Key; media needs its corresponding service |
 | NetEase Music | Search songs, play playlists and daily recommendations | Wi-Fi, your own NetEase account, and available APIs |
 | Reminders | One-time and recurring reminders, chimes, and snooze | Works offline; uses the device clock |
 | Lists | View, check off, and manage tasks | Works offline |
@@ -76,7 +76,7 @@ Use only the matching FoloToy AI Passport hardware revision with ESP32-C3 and 8 
 
 **Back up first.** A full image overwrites configuration in its written range. A complete reset also requires erasing flash. To preserve settings and images, verify the partition layout and use the application image without erasing the whole flash.
 
-On first boot, connect your phone to the device's password-free `Passport-WiFi-xxxx` hotspot and open `http://192.168.4.1`. Follow the setup page to select Wi-Fi, city, and personal details. Xiaozhi and Muse need your own service configuration; AI Voice also needs its Windows companion.
+On first boot, connect your phone to the device's password-free `Passport-WiFi-xxxx` hotspot and open `http://192.168.4.1`. Follow the setup page to select Wi-Fi, city, and personal details. Grok needs your xAI API Key; Muse needs your own service configuration. AI Voice also needs its Windows companion.
 
 ## Make your own version
 
@@ -86,7 +86,7 @@ Download the source, modify the apps or interface, build a firmware image, and t
 | --- | --- |
 | Application UI and logic | [`main/apps/`](../main/apps/) |
 | Launcher, settings, and app lifecycle | [`main/launcher/`](../main/launcher/) |
-| Xiaozhi device control and media handover | [`main/device_control_mcp.cc`](../main/device_control_mcp.cc), [`main/voice_intent.cc`](../main/voice_intent.cc) |
+| Grok device control and media handover | [`main/device_control_mcp.cc`](../main/device_control_mcp.cc), [`main/voice_intent.cc`](../main/voice_intent.cc) |
 | Shared UI and fonts | [`main/ui/`](../main/ui/), [`main/fonts/`](../main/fonts/) |
 | Board drivers | [`components/bsp/`](../components/bsp/) |
 | Wi-Fi setup | [`components/esp-wifi-connect/`](../components/esp-wifi-connect/) |

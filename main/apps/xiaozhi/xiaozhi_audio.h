@@ -35,8 +35,9 @@
 
 namespace xiaozhi {
 
-// 编码：60ms @ 16kHz 单声道 16bit（1920 字节 PCM → ~240 字节 Opus）
-constexpr size_t kEncPcmFrameBytes = 1920;
+// 编码：60ms @ 24kHz 单声道 16bit（2880 字节 PCM → Opus）。
+// Grok 的 Opus 是 24 kHz 原始包，和播放采样率一致，共用同一块 PCM 缓冲。
+constexpr size_t kEncPcmFrameBytes = 2880;
 constexpr int kEncFrameDurationMs = 60;
 
 constexpr size_t kOpusFrameMaxBytes = 512;

@@ -1,5 +1,8 @@
 #pragma once
 
+// Grok voice app. Registry symbols stay xiaozhi_app_* / g_xiaozhi_app;
+// the launcher title and on-device copy say Grok.
+
 #include "apps/app_base.h"
 
 #ifdef __cplusplus

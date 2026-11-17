@@ -1,4 +1,4 @@
-// Xiaozhi: shared terminal conversation view and bounded UTF-8 replies.
+// Grok: shared terminal conversation view and bounded UTF-8 replies.
 #include "apps/xiaozhi/xiaozhi_ui.h"
 #include "apps/xiaozhi/xiaozhi_face.h"
 #include "apps/xiaozhi/xiaozhi_audio.h"
@@ -225,7 +225,7 @@ void ui_init() {
 
     auto *header = ui_pixel_top_bar(s_screen);
     ui_pixel_wifi_bars_create(header, UI_STATUS_WIFI_X, 18, s_wifi_bars);
-    auto *title = ui_pixel_label(header, "小智 AI", &buddy_font_16, UI_TEXT);
+    auto *title = ui_pixel_label(header, "Grok", &buddy_font_16, UI_TEXT);
     lv_obj_align(title, LV_ALIGN_LEFT_MID, 42, 0);
     s_battery = ui_pixel_battery_create(header, UI_STATUS_BATTERY_X, 6, UI_TEXT, &lv_font_montserrat_14);
     refresh_status_bar();
@@ -389,7 +389,7 @@ void ui_set_state(State state) {
         break;
     case State::Connecting:
         set_badge_color(kAmberAccent);
-        lv_label_set_text(s_status_label, "正在连接小智");
+        lv_label_set_text(s_status_label, "正在连接 Grok");
         break;
     case State::Idle:
         set_badge_color(kGreenAccent);
@@ -445,7 +445,7 @@ void ui_set_ai_text(const std::string &text) {
     const std::string folded = passport::fold_display_text(text);
     const auto tail = passport::utf8_tail(folded, kMaxTextBytes);
     s_ai_reply_buffer.assign(tail.data(), tail.size());
-    std::string display = "小智: " + s_ai_reply_buffer;
+    std::string display = "Grok: " + s_ai_reply_buffer;
     lv_label_set_text(s_ai_text_label, display.c_str());
     conversation_layout();
     scroll_to_bottom_locked();
@@ -457,7 +457,7 @@ void ui_append_ai_text(const std::string &text) {
     lv_obj_remove_flag(s_ai_text_label, LV_OBJ_FLAG_HIDDEN);
 
     passport::append_utf8_tail(s_ai_reply_buffer, passport::fold_display_text(text), kMaxTextBytes);
-    std::string display = "小智: " + s_ai_reply_buffer;
+    std::string display = "Grok: " + s_ai_reply_buffer;
     lv_label_set_text(s_ai_text_label, display.c_str());
     conversation_layout();
     scroll_to_bottom_locked();

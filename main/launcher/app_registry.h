@@ -34,7 +34,7 @@ void app_registry_process_pending_switch(void);
 // Phone setup's background completion must not override a user shortcut.
 void app_registry_complete_setup(void);
 
-// 全局按键统一分发（双击 OK 打开小智、长按返回与熄屏唤醒保护）
+// 全局按键统一分发（双击 OK 打开 Grok、长按返回与熄屏唤醒保护）
 void app_registry_dispatch_key(uint8_t btn, app_btn_event_t event, uint16_t mv);
 
 // 由系统心跳调用；统一处理跨 App 的息屏，不额外创建常驻任务。

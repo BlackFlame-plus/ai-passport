@@ -44,8 +44,8 @@ void refresh() {
     if(!rows){ui_pixel_label_set_text(heading,"内存不足");ui_pixel_label_set_text(body,"请退出后重试");return;}
     if(!count) {
         ui_pixel_label_set_text(heading,"还没有提醒");
-        ui_pixel_label_set_text(body,"对小智说：\n\n十分钟后提醒我喝水\n\n只保存文字和时间");
-        ui_pixel_label_set_text(footer,"确定打开小智\n长按确定返回");return;
+        ui_pixel_label_set_text(body,"对 Grok 说：\n\n十分钟后提醒我喝水\n\n只保存文字和时间");
+        ui_pixel_label_set_text(footer,"确定打开 Grok\n长按确定返回");return;
     }
     char title[48];std::snprintf(title,sizeof(title),"提醒 %u / %u",unsigned(selected+1),unsigned(count));
     ui_pixel_label_set_text(heading,title);ui_pixel_label_set_text(body,"");
@@ -144,7 +144,7 @@ void show_alert(const Record *r,const char *error) {
 extern const passport_app_t g_reminders_app;
 const passport_app_t g_reminders_app={
     .id=APP_ID_REMINDERS,.name="备忘提醒",.en_name="REMINDERS",
-    .desc="用小智记下事项\n到点响铃提醒",.tag="本地提醒",.theme_color=0x8CF5A6,
+    .desc="用 Grok 记下事项\n到点响铃提醒",.tag="本地提醒",.theme_color=0x8CF5A6,
     .init=nullptr,.start=reminders::start,.stop=reminders::stop,.on_key=reminders::key,
     .prepare_stop=nullptr,.on_back=reminders::back
 };
