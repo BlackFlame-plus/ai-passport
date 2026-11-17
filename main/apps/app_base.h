@@ -26,6 +26,7 @@ typedef enum {
     APP_ID_NETEASE,
     APP_ID_REMINDERS,
     APP_ID_LISTS,
+    APP_ID_GAMES,       // Launcher hub for the three games (not a gameplay app)
     APP_ID_COUNT
 } passport_app_id_t;
 

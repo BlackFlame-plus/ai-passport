@@ -4,7 +4,7 @@
 
 **A small device worth keeping in your daily routine.**
 
-Community firmware for the FoloToy AI Passport, based on ESP32-C3 with 8 MB Flash. It brings thirteen apps together with shared settings, Wi-Fi setup, themes, audio, battery reporting, and power management.
+Community firmware for the FoloToy AI Passport, based on ESP32-C3 with 8 MB Flash. It brings eleven launcher apps together with shared settings, Wi-Fi setup, themes, audio, battery reporting, and power management.
 
 **Ask Grok to adjust the volume, play music or radio, and set reminders on the device.**
 
@@ -12,7 +12,7 @@ Community firmware for the FoloToy AI Passport, based on ESP32-C3 with 8 MB Flas
 
 ## Why this project exists
 
-Thank you to everyone who has enjoyed the project and shared feedback. I started Passport OS to make a small device I would use regularly, then selected thirteen functions and apps through repeated experiments.
+Thank you to everyone who has enjoyed the project and shared feedback. I started Passport OS to make a small device I would use regularly, then selected the apps I would keep using through repeated experiments.
 
 One part I especially enjoy is letting Grok connect these functions. While chatting, you can ask to hear music, save a task, or start a focus session, and Grok calls the device's functions to carry out the request.
 
@@ -48,9 +48,7 @@ Voice tools require a network connection and your own xAI API Key on the phone s
 | Reminders | One-time and recurring reminders, chimes, and snooze | Works offline; uses the device clock |
 | Lists | View, check off, and manage tasks | Works offline |
 | Muse | Send voice messages and read replies on screen | Phone pairing, your own account, and a working network |
-| Why Barking | A sound-controlled game | Works offline |
-| Sound Jump | Longer sounds jump farther; release your voice to jump | Works offline |
-| Tetris | Stack blocks and clear lines | Works offline |
+| Games | Open Why Barking, Sound Jump, or Tetris from one list | Works offline |
 | Stopwatch | Timing, splits, pause, and resume | Works offline |
 | Pomodoro | Focus sessions, breaks, and completion chimes | Works offline |
 

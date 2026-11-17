@@ -737,6 +737,11 @@ static void game_stop(void) {
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 }
 
+static bool game_on_back(void) {
+    app_registry_switch_to(APP_ID_GAMES);
+    return true;
+}
+
 static void game_on_key(uint8_t btn, app_btn_event_t event, uint16_t mv) {
     (void)mv;
     if (!s_active.load() || !s_screen || event != BTN_EVT_CLICK) return;
@@ -784,5 +789,6 @@ const passport_app_t g_game_app = {
     .stop = game_stop,
     .on_key = game_on_key,
     .prepare_stop = game_prepare_stop,
+    .on_back = game_on_back,
 };
 }

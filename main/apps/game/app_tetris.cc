@@ -546,6 +546,11 @@ static void tetris_on_key(uint8_t btn, app_btn_event_t event, uint16_t mv) {
     bsp_lvgl_unlock();
 }
 
+static bool tetris_on_back(void) {
+    app_registry_switch_to(APP_ID_GAMES);
+    return true;
+}
+
 const passport_app_t g_tetris_app = {
     .id = APP_ID_TETRIS,
     .name = "俄罗斯方块",
@@ -557,5 +562,7 @@ const passport_app_t g_tetris_app = {
     .start = tetris_start,
     .stop = tetris_stop,
     .on_key = tetris_on_key,
+    .prepare_stop = nullptr,
+    .on_back = tetris_on_back,
 };
 }

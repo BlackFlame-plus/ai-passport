@@ -84,6 +84,7 @@ idf_component_register(
         "apps/game/game_mic.c"
         "apps/game/game_sfx.c"
         "apps/game/app_game.cc"
+        "apps/games/app_games.cc"
         "apps/sound_jump/jump_core.c"
         "apps/sound_jump/jump_voice.c"
         "apps/sound_jump/jump_mic.c"
