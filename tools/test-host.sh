@@ -15,6 +15,9 @@ trap 'rm -rf -- "$test_dir"' EXIT
     -fsanitize=address,undefined -g -Itests/registry_mocks -Imain \
     tests/test_app_registry.cc -o "$test_dir/registry"
 "$test_dir/registry"
+"${CXX:-c++}" -std=c++17 -Wall -Wextra -Werror -Itests/registry_mocks -Imain \
+    tests/test_games_menu.cc -o "$test_dir/games-menu"
+"$test_dir/games-menu"
 python3 tools/generate_ui_sfx.py --check
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined \
     -Itests/game_audio_mocks -Imain tests/test_ui_sfx.c -lm -o "$test_dir/ui-sfx"

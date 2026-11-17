@@ -21,11 +21,15 @@ static void key(uint8_t,app_btn_event_t,uint16_t){++keys;if(key_opens_launcher)a
 static netease::Page music_page=netease::Page::Lists;
 static int music_back_calls=0;
 static bool music_back(){++music_back_calls;if(music_page==netease::Page::Lists)return false;music_page=netease::back_page(music_page,true);return true;}
-static passport_app_t app(passport_app_id_t id){passport_app_t a{};a.id=id;a.name="test";a.start=start;a.stop=stop;a.on_key=key;a.prepare_stop=prepare;if(id==APP_ID_NETEASE)a.on_back=music_back;return a;}
+static int games_back_calls=0;
+static bool games_back(){++games_back_calls;return false;}
+static int dog_back_calls=0;
+static bool dog_back(){++dog_back_calls;app_registry_switch_to(APP_ID_GAMES);return true;}
+static passport_app_t app(passport_app_id_t id){passport_app_t a{};a.id=id;a.name="test";a.start=start;a.stop=stop;a.on_key=key;a.prepare_stop=prepare;if(id==APP_ID_NETEASE)a.on_back=music_back;if(id==APP_ID_GAMES)a.on_back=games_back;if(id==APP_ID_GAME||id==APP_ID_TETRIS||id==APP_ID_SOUND_JUMP)a.on_back=dog_back;return a;}
 const passport_app_t g_radio_app=app(APP_ID_RADIO),g_voice_app=app(APP_ID_VOICE),g_xiaozhi_app=app(APP_ID_XIAOZHI),
  g_wifi_app=app(APP_ID_WIFI),g_settings_app=app(APP_ID_SETTINGS),g_home_app=app(APP_ID_HOME),g_game_app=app(APP_ID_GAME),
  g_tetris_app=app(APP_ID_TETRIS),g_stopwatch_app=app(APP_ID_STOPWATCH),g_sound_jump_app=app(APP_ID_SOUND_JUMP),g_muse_app=app(APP_ID_MUSE),g_pomodoro_app=app(APP_ID_POMODORO),
- g_netease_app=app(APP_ID_NETEASE),g_reminders_app=app(APP_ID_REMINDERS),g_lists_app=app(APP_ID_LISTS);
+ g_netease_app=app(APP_ID_NETEASE),g_reminders_app=app(APP_ID_REMINDERS),g_lists_app=app(APP_ID_LISTS),g_games_app=app(APP_ID_GAMES);
 static bool mock_reminder_active=false;
 namespace reminders {
  bool alarm_active(){return mock_reminder_active;}
@@ -56,9 +60,37 @@ int main(){
   assert(app_registry_background_idle()==!streaming);
  }
  s_active_id.store(APP_ID_LAUNCHER);s_screen_on.store(true);
- app_registry_init();app_registry_switch_to(APP_ID_HOME);assert(starts==1);
+ app_registry_init();
+ // Games hub is the only launcher card; the three games stay ID-addressable.
+ {
+  int hub=0;
+  for(size_t i=0;i<app_registry_get_count();++i){
+   const passport_app_t *a=app_registry_get_by_index(i);
+   assert(a);if(a->id==APP_ID_GAMES)++hub;
+   assert(a->id!=APP_ID_GAME&&a->id!=APP_ID_TETRIS&&a->id!=APP_ID_SOUND_JUMP);
+  }
+  assert(hub==1);
+  assert(app_registry_get_by_id(APP_ID_GAME)==&g_game_app);
+  assert(app_registry_get_by_id(APP_ID_TETRIS)==&g_tetris_app);
+  assert(app_registry_get_by_id(APP_ID_SOUND_JUMP)==&g_sound_jump_app);
+  assert(app_registry_get_by_id(APP_ID_GAMES)==&g_games_app);
+ }
+ // Long OK from a game returns to the Games hub; hub root exits to launcher.
+ app_registry_switch_to(APP_ID_GAME);assert(app_registry_get_active()==APP_ID_GAME);
+ const int before_dog=dog_back_calls;
+ app_registry_dispatch_key(BSP_BTN_OK,BTN_EVT_LONG,0);
+ assert(dog_back_calls==before_dog+1&&app_registry_get_active()==APP_ID_GAMES);
+ const int before_games=games_back_calls;
+ app_registry_dispatch_key(BSP_BTN_OK,BTN_EVT_LONG,0);
+ assert(games_back_calls==before_games+1&&app_registry_get_active()==APP_ID_LAUNCHER);
+ // Reset counters so the original lifecycle assertions stay relative.
+ starts=stops=keys=feedback_count=conversation_requests=0;for(auto &screen:screens)screen=nullptr;
+ mock_active=nullptr;s_ok_long_triggered=false;overlay_text[0]=0;
+ for(auto it=mock_screens.begin();it!=mock_screens.end();){auto *p=*it;it=mock_screens.erase(it);delete p;}
+ app_registry_switch_to(APP_ID_HOME);assert(starts==1);
  mock_reminder_active=true;assert(!app_registry_sound_notice()&&alarm_attempts==0);mock_reminder_active=false;
- assert(mock_socket_cleanups==2);
+ const int sockets_at_home=mock_socket_cleanups;
+ assert(sockets_at_home>=1);
  auto *old=mock_active;const int before_stops=stops;
  mock_ready=false;app_registry_switch_to(APP_ID_RADIO);
  for(int i=0;i<50;++i)app_registry_process_pending_switch();

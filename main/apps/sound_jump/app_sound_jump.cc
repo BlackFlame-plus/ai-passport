@@ -246,7 +246,8 @@ void on_key(uint8_t btn,app_btn_event_t event,uint16_t){
  bsp_lvgl_unlock();save_progress();
 }
 }
+static bool on_back(){app_registry_switch_to(APP_ID_GAMES);return true;}
 extern const passport_app_t g_sound_jump_app={
  .id=APP_ID_SOUND_JUMP,.name="声音跳一跳",.en_name="SOUND JUMP",.desc="长声跳远，短声跳近\n停声就跳",.tag="VOICE GAME",.theme_color=gold,
- .init=init,.start=start,.stop=stop,.on_key=on_key
+ .init=init,.start=start,.stop=stop,.on_key=on_key,.prepare_stop=nullptr,.on_back=on_back
 };

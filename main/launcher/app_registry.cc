@@ -24,6 +24,7 @@
 #include "ui_sfx.h"
 #include "apps/reminders/reminder_service.h"
 #include "apps/xiaozhi/app_xiaozhi.h"
+#include "apps/games/app_games.h"
 #include <atomic>
 #include <vector>
 
@@ -45,6 +46,7 @@ extern const passport_app_t g_pomodoro_app;
 extern const passport_app_t g_netease_app;
 extern const passport_app_t g_reminders_app;
 extern const passport_app_t g_lists_app;
+extern const passport_app_t g_games_app;
 
 namespace {
 
@@ -62,16 +64,15 @@ const passport_app_t *s_apps[] = {
     &g_stopwatch_app,
     &g_reminders_app,
     &g_lists_app,
-    &g_tetris_app,
-    &g_game_app,
-    &g_sound_jump_app,
+    &g_games_app,      // 三个游戏收进「游戏」入口;单体仍可由 ID 直达
     &g_settings_app,   // 设置放最后(应用惯用收尾位置)
 };
 
 constexpr size_t kAppCount = sizeof(s_apps) / sizeof(s_apps[0]);
 bool feedback_allowed(passport_app_id_t id) {
     return id == APP_ID_HOME || id == APP_ID_LAUNCHER || id == APP_ID_SETTINGS ||
-           id == APP_ID_WIFI || id == APP_ID_STOPWATCH || id == APP_ID_POMODORO || id == APP_ID_TETRIS || id == APP_ID_REMINDERS || id == APP_ID_LISTS;
+           id == APP_ID_WIFI || id == APP_ID_STOPWATCH || id == APP_ID_POMODORO ||
+           id == APP_ID_TETRIS || id == APP_ID_GAMES || id == APP_ID_REMINDERS || id == APP_ID_LISTS;
 }
 std::atomic<passport_app_id_t> s_active_id{APP_ID_LAUNCHER};
 wake_gate_t s_wake_gate{};
@@ -336,6 +337,11 @@ const passport_app_t *app_registry_get_by_id(passport_app_id_t id) {
     // 少了这个特判,切回首页会因为找不到 app 实例而停在过渡屏(黑屏)。
     if (id == APP_ID_HOME) return &g_home_app;
     if (id == APP_ID_WIFI) return &g_wifi_app; // hidden system setup, never a launcher card
+    // Games stay addressable for MCP/serial/voice while the launcher shows only
+    // the Games hub card.
+    if (id == APP_ID_GAME) return &g_game_app;
+    if (id == APP_ID_TETRIS) return &g_tetris_app;
+    if (id == APP_ID_SOUND_JUMP) return &g_sound_jump_app;
     for (size_t i = 0; i < kAppCount; ++i) {
         if (s_apps[i] && s_apps[i]->id == id) {
             return s_apps[i];
